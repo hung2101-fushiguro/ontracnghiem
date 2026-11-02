@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ôn trắc nghiệm</title>
+<style>
+:root{
+  --bg:#ffffff;--card:#fff;--text:#1f2430;--muted:#6b7280;--border:#dfe3ea;
+  --accent:#0ea5e9;--ok-bg:#e6f6ec;--ok:#15803d;--bad-bg:#fdeaea;--bad:#b91c1c;--exp-bg:#e0f2fe;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:820px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:22px;margin:4px 0 14px}
+textarea{width:100%;min-height:200px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text);font:14px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+button{padding:8px 14px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer;font:inherit;font-size:14px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:hover{filter:brightness(.95)}
+label.chk{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);cursor:pointer}
+.score{margin-left:auto;font-size:14px;color:var(--muted)}
+.q{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin:14px 0}
+.qt{font-weight:600;margin:0 0 10px;white-space:pre-wrap}
+.qn{color:var(--accent);margin-right:6px}
+.opt{display:flex;gap:10px;width:100%;text-align:left;margin:6px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--text)}
+.opt .l{font-weight:700;min-width:1.4em}
+.opt.ok{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}
+.opt.bad{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
+.opt.locked{cursor:default}
+.exp{display:none;margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--exp-bg);font-size:15px}
+.q.done .exp{display:block}
+.msg{color:var(--bad);font-size:14px;margin-top:8px}
+.hint{color:var(--muted);font-size:13px;margin:6px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Ôn trắc nghiệm</h1>
+  <textarea id="inp" placeholder="Dán nội dung câu hỏi vào đây (mỗi câu gồm dòng câu hỏi, 4 dòng đáp án A. B. C. D., dòng &quot;Đáp án: X&quot;, dòng &quot;Giải thích: ...&quot;, các câu cách nhau một dòng trống)"></textarea>
+  <div class="bar">
+    <button class="primary" id="go">Hiển thị</button>
+    <button id="reset">Làm lại</button>
+    <label class="chk"><input type="checkbox" id="showAll"> Hiện sẵn đáp án</label>
+    <span class="score" id="score"></span>
+  </div>
+  <div id="msg" class="msg"></div>
+  <p class="hint">Bấm vào một đáp án để chọn, đáp án đúng và giải thích sẽ hiện ra. Tắt trang là mất hết dữ liệu.</p>
+  <div id="list"></div>
+</div>
+
+<script>
+var qs = [];
+
+function esc(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmt(s){
+  return esc(s)
+    .replace(/&lt;u&gt;/gi,'<u>').replace(/&lt;\/u&gt;/gi,'</u>')
+    .replace(/&lt;star&gt;\s*&lt;\/star&gt;/gi,'★')
+    .replace(/&lt;blank&gt;\s*&lt;\/blank&gt;/gi,'_____');
+}
+
+function parse(text){
+  var blocks = text.replace(/\r/g,'').trim().split(/\n\s*\n/);
+  var out = [], skipped = 0;
+  blocks.forEach(function(b){
+    var lines = b.split('\n').map(function(l){return l.trim();}).filter(Boolean);
+    var q = [], opts = [], ans = null, exp = [], inExp = false;
+    lines.forEach(function(l){
+      var a = l.match(/^(?:đáp án|dap an|answer)\s*[:：]\s*([A-D1-4])/i);
+      var e = l.match(/^(?:giải thích|giai thich|explanation)\s*[:：]\s*(.*)$/i);
+      var o = l.match(/^([A-D]|[1-4])\s*[.)]\s*(.*)$/);
+      if (a){ ans = a[1].toUpperCase(); inExp = false; }
+      else if (e){ exp.push(e[1]); inExp = true; }
+      else if (inExp){ exp.push(l); }
+      else if (o && (opts.length || q.length)){ opts.push(o[2]); }
+      else if (!opts.length){ q.push(l); }
+    });
+    if (q.length && opts.length >= 2 && ans){
+      var idx = 'ABCD'.indexOf(ans); if (idx < 0) idx = '1234'.indexOf(ans);
+      if (idx >= 0 && idx < opts.length){
+        out.push({q:q.join('\n'), opts:opts, ans:idx, exp:exp.join('\n')});
+        return;
+      }
+    }
+    skipped++;
+  });
+  return {list:out, skipped:skipped};
+}
+
+function render(){
+  var box = document.getElementById('list');
+  box.innerHTML = '';
+  var showAll = document.getElementById('showAll').checked;
+  qs.forEach(function(item, i){
+    var card = document.createElement('div');
+    card.className = 'q';
+    var t = document.createElement('p');
+    t.className = 'qt';
+    t.innerHTML = '<span class="qn">Câu ' + (i+1) + '.</span>' + fmt(item.q);
+    card.appendChild(t);
+    var btns = [];
+    item.opts.forEach(function(txt, k){
+      var b = document.createElement('button');
+      b.className = 'opt';
+      b.innerHTML = '<span class="l">' + 'ABCD'[k] + '.</span><span>' + fmt(txt) + '</span>';
+      b.onclick = function(){ choose(i, k); };
+      card.appendChild(b);
+      btns.push(b);
+    });
+    var ex = document.createElement('div');
+    ex.className = 'exp';
+    ex.innerHTML = '<b>Đáp án: ' + 'ABCD'[item.ans] + '</b>' + (item.exp ? '<br>' + fmt(item.exp) : '');
+    card.appendChild(ex);
+    card._btns = btns;
+    item.card = card;
+    box.appendChild(card);
+    if (item.picked != null) paint(item);
+    else if (showAll) paint(item, true);
+  });
+  updateScore();
+}
+
+function paint(item, reveal){
+  var card = item.card;
+  card.classList.add('done');
+  card._btns.forEach(function(b, k){
+    b.classList.add('locked');
+    if (k === item.ans) b.classList.add('ok');
+    else if (k === item.picked) b.classList.add('bad');
+  });
+}
+
+function choose(i, k){
+  var item = qs[i];
+  if (item.picked != null) return;
+  item.picked = k;
+  paint(item);
+  updateScore();
+}
+
+function updateScore(){
+  var done = 0, right = 0;
+  qs.forEach(function(it){
+    if (it.picked != null){ done++; if (it.picked === it.ans) right++; }
+  });
+  document.getElementById('score').textContent =
+    qs.length ? ('Đã làm ' + done + '/' + qs.length + ' · Đúng ' + right) : '';
+}
+
+document.getElementById('go').onclick = function(){
+  var r = parse(document.getElementById('inp').value);
+  qs = r.list;
+  var m = document.getElementById('msg');
+  if (!qs.length) m.textContent = 'Không đọc được câu hỏi nào. Kiểm tra lại định dạng.';
+  else if (r.skipped) m.textContent = 'Có ' + r.skipped + ' đoạn không đúng định dạng nên đã bị bỏ qua.';
+  else m.textContent = '';
+  render();
+};
+document.getElementById('reset').onclick = function(){
+  qs.forEach(function(it){ it.picked = null; });
+  render();
+};
+document.getElementById('showAll').onchange = render;
+</script>
+</body>
+</html>
